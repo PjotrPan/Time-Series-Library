@@ -228,7 +228,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     input = batch_x.detach().cpu().numpy()
                     gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
                     pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
-                    visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
+                    gt = test_data.inverse_transform(gt.reshape(-1,1))
+                    pd = test_data.inverse_transform(pd.reshape(-1,1))
+                    visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
 
         preds = np.array(preds)
         trues = np.array(trues)
@@ -241,6 +243,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
+
+        preds = test_data.inverse_transform(preds[:,:,0])
+        trues = test_data.inverse_transform(trues[:,:,0])
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}'.format(mse, mae))

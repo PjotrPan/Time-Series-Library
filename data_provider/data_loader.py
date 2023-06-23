@@ -15,6 +15,98 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+class Ohio_Dataset(Dataset):
+    def __init__(self, root_path, flag='train', size=None,
+                 features='S', data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets/588_train_dataset.csv",
+                 target='OT', scale=True, timeenc=0, freq='h', 
+                 seasonal_patterns=None, forecast_history=36, forecast_length=6):
+        
+        self.root_path = root_path
+        self.scale = scale
+        self.timeenc = timeenc
+        self.freq = freq
+        self.flag = flag
+        self.data_path = data_path
+
+        if size:
+            self.forecast_history = size[0]
+            self.forecast_length = size[2]
+        else:
+            self.forecast_history = forecast_history
+            self.forecast_length = forecast_length
+
+        assert flag in ['train', 'test', 'val']
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        self.set_type = type_map[flag]
+
+        self.__read_data__()
+
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+        df_raw = pd.read_csv(self.data_path)
+
+        if "Unnamed: 0" in df_raw.columns:
+            df_raw = df_raw.drop(["Unnamed: 0"], 1)
+
+        border1s = [0, int(len(df_raw)*0.7), int(len(df_raw)*0.9)]
+        border2s = [int(len(df_raw)*0.7), int(len(df_raw)*0.9), int(len(df_raw))]
+        border1 = border1s[self.set_type]
+        border2 = border2s[self.set_type]
+
+        df_stamp = df_raw[['datetime']][border1:border2]
+        df_stamp['datetime'] = pd.to_datetime(df_stamp.datetime)
+        if self.timeenc == 0:
+            df_stamp['month'] = df_stamp.datetime.apply(lambda row: row.month, 1)
+            df_stamp['day'] = df_stamp.datetime.apply(lambda row: row.day, 1)
+            df_stamp['hour'] = df_stamp.datetime.apply(lambda row: row.hour, 1)
+            df_stamp['minute'] = df_stamp.datetime.apply(lambda row: row.minute, 1)
+            data_stamp = df_stamp.drop(['datetime'], 1).values
+            df_raw = df_raw.drop(["datetime"], 1)
+        elif self.timeenc == 1:
+            data_stamp = time_features(pd.to_datetime(df_stamp['datetime'].values), freq=self.freq)
+            data_stamp = data_stamp.transpose(1, 0)
+            df_raw = df_raw.drop(['datetime'], 1)
+            
+        elif self.timeenc == 2:
+            data_stamp = df_raw[["month_cos", "month_sin", 
+                                 "day_cos", "day_sin", 
+                                 "hour_cos", "hour_sin", 
+                                 "minute_cos", "minute_sin"]]
+            
+            df_raw = df_raw.drop([["month_cos", "month_sin",
+                                   "day_cos", "day_sin", 
+                                   "hour_cos", "hour_sin", 
+                                   "minute_cos", "minute_sin"]], 1) 
+
+        if self.scale:
+            glucose_level = df_raw["glucose_level"].values.reshape(-1,1)
+            self.scaler.fit(glucose_level)
+            df_raw["glucose_level"] = self.scaler.transform(glucose_level)
+            data = df_raw.values
+
+        self.data_x = data[border1:border2, 0].reshape(-1,1)
+        self.data_y = data[border1:border2, 0].reshape(-1,1)
+        self.data_stamp = data_stamp
+
+    def __getitem__(self, index):
+        s_begin = index
+        s_end = s_begin + self.forecast_history
+        r_begin = s_end
+        r_end = r_begin + self.forecast_length
+
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_y_mark = self.data_stamp[r_begin:r_end]
+
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        return len(self.data_x) - self.forecast_history - self.forecast_length + 1
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
