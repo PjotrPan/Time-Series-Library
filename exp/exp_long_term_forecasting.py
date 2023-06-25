@@ -9,6 +9,8 @@ import os
 import time
 import warnings
 import numpy as np
+from tqdm import tqdm
+import wandb
 
 warnings.filterwarnings('ignore')
 
@@ -16,6 +18,16 @@ warnings.filterwarnings('ignore')
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
+        
+        wandb.login()
+        run = wandb.init(
+            project="glucose_prediction",
+            config = {
+                "learning_rate": args.learning_rate,
+                "epochs": args.train_epochs
+            }
+        )
+
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -40,7 +52,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(vali_loader)):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float()
 
@@ -73,6 +85,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 total_loss.append(loss)
         total_loss = np.average(total_loss)
+
         self.model.train()
         return total_loss
 
@@ -159,7 +172,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
-            test_loss = self.vali(test_data, test_loader, criterion)
+            test_loss = 1
+            #test_loss = self.vali(test_data, test_loader, criterion)
+
+            wandb.log({"training loss": train_loss, "validation loss": vali_loss})
 
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                 epoch + 1, train_steps, train_loss, vali_loss, test_loss))
@@ -176,6 +192,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return self.model
 
     def test(self, setting, test=0):
+        from tqdm import tqdm
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
@@ -189,7 +206,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
@@ -224,12 +241,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 preds.append(pred)
                 trues.append(true)
+
                 if i % 20 == 0:
                     input = batch_x.detach().cpu().numpy()
                     gt = np.concatenate((input[0, :, -1], true[0, :, -1]), axis=0)
                     pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
                     gt = test_data.inverse_transform(gt.reshape(-1,1))
                     pd = test_data.inverse_transform(pd.reshape(-1,1))
+                    wandb.log({"Test Error": np.abs(gt - pd).sum()})
                     visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
 
         preds = np.array(preds)
@@ -248,6 +267,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         trues = test_data.inverse_transform(trues[:,:,0])
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
+        print(f'Mean error: {np.abs(trues - preds).sum(axis=1).mean()}')
         print('mse:{}, mae:{}'.format(mse, mae))
         f = open("result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
