@@ -14,8 +14,136 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-
 class Ohio_Dataset(Dataset):
+    def __init__(self, root_path, flag='train', 
+                 size=None, features='S', 
+                 data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets",
+                 target='OT', scale=True, timeenc=0, freq='h', 
+                 seasonal_patterns=None, forecast_history=36, forecast_length=6,
+                 patient_numbers=[540]):
+        
+        self.scale = scale
+        self.timeenc = timeenc
+
+        self.freq = freq
+        self.flag = flag
+        self.data_path = data_path
+
+        if size:
+            self.forecast_history = size[0]
+            self.forecast_length = size[2]
+        else:
+            self.forecast_history = forecast_history
+            self.forecast_length = forecast_length
+
+        assert flag in ['train', 'test', 'val']
+        self.flag = flag
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        self.set_type = type_map[flag]
+        if not patient_numbers:
+            patient_numbers = [[540,544,552,567,584,596,559,563,570,575,588,591],
+                            [540,544,552,567,584,596,559,563,570,575,588,591],
+                            [540,544,552,567,584,596]]
+            self.patient_numbers = patient_numbers[self.set_type]
+        else:
+            self.patient_numbers = patient_numbers
+
+        self.__read_data__()
+
+    def __read_data__(self):
+        self.scaler = StandardScaler()
+
+        all_data = [pd.read_csv(os.path.join(self.data_path, f"{patient_number}_{self.flag}_dataset.csv"))
+                    for patient_number in self.patient_numbers]
+
+        self.entry_count = np.array([len(data) for data in all_data])
+        self.cum_entry_count = (self.entry_count - self.forecast_history - self.forecast_length).cumsum()
+
+        total_glucose_levels = np.zeros((0))
+        for da in all_data:
+            total_glucose_levels = np.concatenate((total_glucose_levels, da["glucose_level"].values))
+
+        self.scaler.fit(total_glucose_levels[1:].reshape(-1,1))
+
+        for idx, df_raw in enumerate(all_data):
+            if "Unnamed: 0" in df_raw.columns:
+                df_raw = df_raw.drop(["Unnamed: 0"], 1)
+
+            df_stamp = df_raw[['datetime']]
+            df_stamp['datetime'] = pd.to_datetime(df_stamp.datetime)
+            
+            if self.timeenc == 0:
+                df_stamp['month'] = df_stamp.datetime.apply(lambda row: row.month, 1)
+                df_stamp['day'] = df_stamp.datetime.apply(lambda row: row.day, 1)
+                df_stamp['hour'] = df_stamp.datetime.apply(lambda row: row.hour, 1)
+                df_stamp['minute'] = df_stamp.datetime.apply(lambda row: row.minute, 1)
+                data_stamp = df_stamp.drop(['datetime'], 1).values
+                df_raw = df_raw.drop(["datetime"], 1)
+            elif self.timeenc == 1:
+                data_stamp = time_features(pd.to_datetime(df_stamp['datetime'].values), freq=self.freq)
+                data_stamp = data_stamp.transpose(1, 0)
+                df_raw = df_raw.drop(['datetime'], 1)
+                
+            elif self.timeenc == 2:
+                data_stamp = df_raw[["month_cos", "month_sin", 
+                                    "day_cos", "day_sin", 
+                                    "hour_cos", "hour_sin", 
+                                    "minute_cos", "minute_sin"]]
+                
+                df_raw = df_raw.drop([["month_cos", "month_sin",
+                                    "day_cos", "day_sin", 
+                                    "hour_cos", "hour_sin", 
+                                    "minute_cos", "minute_sin"]], 1) 
+        
+            time_shape = data_stamp.shape
+            time_padding = np.zeros((max(self.entry_count) - time_shape[0], time_shape[1]))
+            time_data = np.concatenate((data_stamp, time_padding), axis=0)
+            time_data = np.expand_dims(time_data, axis=0)
+
+            if self.scale:
+                glucose_level = df_raw["glucose_level"].values.reshape(-1,1)
+                df_raw["glucose_level"] = self.scaler.transform(glucose_level)
+                data = df_raw.values
+            else:
+                data = df_raw.values
+            data_shape = data.shape
+            data_padding = np.zeros((max(self.entry_count) - data_shape[0], data_shape[1]))
+            data = np.concatenate((data, data_padding), axis=0)
+            data = np.expand_dims(data, axis=0)
+
+            if idx == 0:
+                times = time_data.copy()
+                total_data = data.copy()
+            else:
+                times = np.concatenate((times, time_data), axis=0)
+                total_data = np.concatenate((total_data, data), axis=0)
+
+        self.data_x = total_data[:,:,:1]
+        self.data_y = total_data[:,:,:1]
+        self.data_stamp = times
+
+
+    def __getitem__(self, index):
+        patient_idx = np.where(index < self.cum_entry_count)[0][0]
+        s_begin = index - self.cum_entry_count[patient_idx - 1] if patient_idx > 0 else index
+        s_end = s_begin + self.forecast_history
+        r_begin = s_end
+        r_end = r_begin + self.forecast_length
+
+        seq_x = self.data_x[patient_idx, s_begin:s_end]
+        seq_y = self.data_y[patient_idx, r_begin:r_end]
+        seq_x_mark = self.data_stamp[patient_idx, s_begin:s_end]
+        seq_y_mark = self.data_stamp[patient_idx, r_begin:r_end]
+
+        return seq_x, seq_y, seq_x_mark, seq_y_mark
+
+    def __len__(self):
+        return (self.entry_count - self.forecast_history - self.forecast_length).sum()
+
+    def inverse_transform(self, data):
+        return self.scaler.inverse_transform(data)
+
+class Ohio_Dataset_Single(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets/588_train_dataset.csv",
                  target='OT', scale=True, timeenc=0, freq='h', 
@@ -26,7 +154,7 @@ class Ohio_Dataset(Dataset):
         self.timeenc = timeenc
         self.freq = freq
         self.flag = flag
-        self.data_path = data_path
+        self.data_path = data_path + "/588_train_dataset.csv"
 
         if size:
             self.forecast_history = size[0]
@@ -48,8 +176,8 @@ class Ohio_Dataset(Dataset):
         if "Unnamed: 0" in df_raw.columns:
             df_raw = df_raw.drop(["Unnamed: 0"], 1)
 
-        border1s = [0, int(len(df_raw)*0.7), int(len(df_raw)*0.9)]
-        border2s = [int(len(df_raw)*0.7), int(len(df_raw)*0.9), int(len(df_raw))]
+        border1s = [0, int(len(df_raw)*0.85), int(len(df_raw)*0.95)]
+        border2s = [int(len(df_raw)*0.85), int(len(df_raw)*0.95), int(len(df_raw))]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
 
