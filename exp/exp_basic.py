@@ -8,21 +8,21 @@ class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
-            'TimesNet': TimesNet,
-            'Autoformer': Autoformer,
-            'Transformer': Transformer,
-            'Nonstationary_Transformer': Nonstationary_Transformer,
-            'DLinear': DLinear,
-            'FEDformer': FEDformer,
-            'Informer': Informer,
-            'LightTS': LightTS,
-            'Reformer': Reformer,
-            'ETSformer': ETSformer,
-            'PatchTST': PatchTST,
-            'Pyraformer': Pyraformer,
-            'MICN': MICN,
-            'Crossformer': Crossformer,
-            'FiLM': FiLM,
+            'TimesNet': TimesNet,           # -/+
+            'Autoformer': Autoformer,       # -
+            'Transformer': Transformer,     # +
+            'Nonstationary_Transformer': Nonstationary_Transformer, # -
+            'DLinear': DLinear,             # + (Only 1 Feature)
+            'FEDformer': FEDformer,         # -
+            'Informer': Informer,           # +
+            'LightTS': LightTS,             # +
+            'Reformer': Reformer,           # +
+            'ETSformer': ETSformer,         # -
+            'PatchTST': PatchTST,           # + (Only 1 Feature)
+            'Pyraformer': Pyraformer,       # +
+            'MICN': MICN,                   # -
+            'Crossformer': Crossformer,     # +
+            'FiLM': FiLM,                   # +
         }
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
