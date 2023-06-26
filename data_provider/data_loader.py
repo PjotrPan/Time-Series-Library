@@ -20,14 +20,15 @@ class Ohio_Dataset(Dataset):
                  data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets",
                  target='OT', scale=True, timeenc=0, freq='h', 
                  seasonal_patterns=None, forecast_history=36, forecast_length=6,
-                 patient_numbers=[540]):
-        
+                 patient_numbers=None, no_features=1):
+
         self.scale = scale
         self.timeenc = timeenc
 
         self.freq = freq
         self.flag = flag
         self.data_path = data_path
+        self.no_features = no_features
 
         if size:
             self.forecast_history = size[0]
@@ -44,9 +45,15 @@ class Ohio_Dataset(Dataset):
             patient_numbers = [[540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596]]
+            
+            #patient_numbers = [[540, 544],
+            #                   [540],[540]]
             self.patient_numbers = patient_numbers[self.set_type]
         else:
-            self.patient_numbers = patient_numbers
+            print(f"Focus on patient with number: {patient_numbers}")
+            patient_numbers = [patient_numbers, patient_numbers, patient_numbers]
+
+            self.patient_numbers = patient_numbers[self.set_type]
 
         self.__read_data__()
 
@@ -57,7 +64,7 @@ class Ohio_Dataset(Dataset):
                     for patient_number in self.patient_numbers]
 
         self.entry_count = np.array([len(data) for data in all_data])
-        self.cum_entry_count = (self.entry_count - self.forecast_history - self.forecast_length).cumsum()
+        self.cum_entry_count = (self.entry_count - self.forecast_history - self.forecast_length + 1).cumsum()
 
         total_glucose_levels = np.zeros((0))
         for da in all_data:
@@ -118,7 +125,9 @@ class Ohio_Dataset(Dataset):
                 times = np.concatenate((times, time_data), axis=0)
                 total_data = np.concatenate((total_data, data), axis=0)
 
-        self.data_x = total_data[:,:,:1]
+        print(f"Data has {self.no_features} Features")
+
+        self.data_x = total_data[:,:,:self.no_features]
         self.data_y = total_data[:,:,:1]
         self.data_stamp = times
 
@@ -138,7 +147,7 @@ class Ohio_Dataset(Dataset):
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
-        return (self.entry_count - self.forecast_history - self.forecast_length).sum()
+        return (self.entry_count - self.forecast_history - self.forecast_length + 1).sum()
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
