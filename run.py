@@ -10,7 +10,7 @@ import random
 import numpy as np
 
 if __name__ == '__main__':
-    fix_seed = 2021
+    fix_seed = 2022
     random.seed(fix_seed)
     torch.manual_seed(fix_seed)
     np.random.seed(fix_seed)
@@ -28,8 +28,8 @@ if __name__ == '__main__':
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
-    parser.add_argument('--root_path', type=str, default='./data/ETT/', help='root path of the data file')
-    parser.add_argument('--data_path', type=str, default='~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets/', help='data file')
+    parser.add_argument('--root_path', type=str, default='~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets', help='root path of the data file')
+    parser.add_argument('--data_path', type=str, default='single', help='data file')
     parser.add_argument('--features', type=str, default='M',
                         help='forecasting task, options:[M, S, MS]; M:multivariate predict multivariate, S:univariate predict univariate, MS:multivariate predict univariate')
     parser.add_argument('--target', type=str, default='OT', help='target feature in S or MS task')
@@ -38,11 +38,12 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
     parser.add_argument('--patient_numbers', type=str, default=None, nargs="*")
     parser.add_argument('--no_features', type=int, default=1)
-
+    parser.add_argument('--timeenc', type=int, default=1)
+    parser.add_argument('--filter_size', type=int, default=3)
 
     # forecasting task
     parser.add_argument('--seq_len', type=int, default=48, help='input sequence length')
-    parser.add_argument('--label_len', type=int, default=0, help='start token length')
+    parser.add_argument('--label_len', type=int, default=6, help='start token length')
     parser.add_argument('--pred_len', type=int, default=6, help='prediction sequence length')
     parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
 
@@ -79,7 +80,7 @@ if __name__ == '__main__':
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
     parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
     parser.add_argument('--batch_size', type=int, default=128, help='batch size of train input data')
-    parser.add_argument('--patience', type=int, default=8, help='early stopping patience')
+    parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--learning_rate', type=float, default=0.01, help='optimizer learning rate')
     parser.add_argument('--des', type=str, default='test', help='exp description')
     parser.add_argument('--loss', type=str, default='MSE', help='loss function')
