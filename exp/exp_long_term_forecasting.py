@@ -11,6 +11,8 @@ import warnings
 import numpy as np
 from tqdm import tqdm
 import wandb
+import matplotlib.pyplot as plt
+
 
 warnings.filterwarnings('ignore')
 
@@ -38,6 +40,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
+    def _weighted_loss(self, pred, true, cpu=False):
+        weight = torch.tensor([1.0, 1.0, 1.0, 1.5, 2.3, 3.0]*true.shape[0]).reshape(true.shape)
+        weight = weight.float()
+        if not cpu:
+            weight = weight.to(self.device)
+        loss = (weight * (pred - true)**2).mean()
+        return loss
+
     def setup_sweep(self, args):
         print("\n start sweeping \n")
 
@@ -47,7 +57,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             'metric': {'goal': 'minimize', 'name': 'validation loss'},
             'parameters': 
             {
-                'factor': {'values': [1,2,3,4,5]}
+                'seq_len': {'values': [42, 54, 66, 78]},
+                'moving_avg': {'values': [3, 5, 9, 13, 17, 25]}
             }
         }
 
@@ -59,7 +70,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         wandb.agent(sweep_id, function = self.train )
 
     def update_sweep(self):       
-        self.args.factor = wandb.config.factor
+        self.args.seq_len = wandb.config.seq_len
+        self.args.moving_avg = wandb.config.moving_avg
 
         self.model = self._build_model().to(self.device)
 
@@ -97,6 +109,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -117,6 +130,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 true = batch_y.detach().cpu()
 
                 loss = criterion(pred, true)
+                #loss = self._weighted_loss(pred, true, cpu=True)
 
                 total_loss.append(loss)
         total_loss = np.average(total_loss)
@@ -165,7 +179,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                
+
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -188,7 +202,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     f_dim = -1 if self.args.features == 'MS' else 0
                     outputs = outputs[:, -self.args.pred_len:, f_dim:]
                     batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
                     loss = criterion(outputs, batch_y)
+                    #loss = self._weighted_loss(outputs, batch_y)
                     train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
@@ -254,6 +270,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # decoder input
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
@@ -276,10 +293,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 pred = outputs
                 true = batch_y
-
                 preds.append(pred)
                 trues.append(true)
-
 
                 if i % 20 == 0:
                     input = batch_x.detach().cpu().numpy()
@@ -304,10 +319,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         preds = test_data.inverse_transform(preds[:,:,0])
         trues = test_data.inverse_transform(trues[:,:,0])
+   
+        plt.clf()
+        e = np.abs(trues - preds).sum(axis=1)
+        x = np.arange(len(trues))
+        plt.hist(e, bins=100)
+        plt.savefig(folder_path + 'loss.png')
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print(f'Mean error: {np.abs(trues - preds).sum(axis=1).mean()}')
-        print('mse:{}, mae:{}'.format(mse, mae))
+        print(f'{"="*60}\n\nMean error: {np.abs(trues - preds).sum(axis=1).mean()}\n\n{"="*60}')
+        print(f'Compare to: {np.abs(preds - trues).mean()}')
+
+        print('rmse:{}, mae:{}'.format(rmse, mae))
         f = open("result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}'.format(mse, mae))
