@@ -84,6 +84,7 @@ def data_provider(args, flag):
             seasonal_patterns=args.seasonal_patterns,
             patient_numbers=args.patient_numbers,
             no_features=args.no_features,
+            filter_size=args.filter_size
         )
         print(flag, len(data_set))
         data_loader = DataLoader(
