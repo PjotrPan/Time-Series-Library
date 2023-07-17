@@ -7,10 +7,10 @@ class IEBlock(nn.Module):
     def __init__(self, input_dim, hid_dim, output_dim, num_node):
         super(IEBlock, self).__init__()
 
-        self.input_dim = input_dim
-        self.hid_dim = hid_dim
-        self.output_dim = output_dim
-        self.num_node = num_node
+        self.input_dim = input_dim      # 16
+        self.hid_dim = hid_dim          # 16
+        self.output_dim = output_dim    # 6
+        self.num_node = num_node        # 2
 
         self._build()
 
@@ -21,7 +21,7 @@ class IEBlock(nn.Module):
             nn.Linear(self.hid_dim, self.hid_dim // 4)
         )
 
-        self.channel_proj = nn.Linear(self.num_node, self.num_node)
+        self.channel_proj = nn.Linear(self.num_node, 1)
         torch.nn.init.eye_(self.channel_proj.weight)
 
         self.output_proj = nn.Linear(self.hid_dim // 4, self.output_dim)
@@ -30,9 +30,7 @@ class IEBlock(nn.Module):
         x = self.spatial_proj(x.permute(0, 2, 1))
         x = x.permute(0, 2, 1) + self.channel_proj(x.permute(0, 2, 1))
         x = self.output_proj(x.permute(0, 2, 1))
-
         x = x.permute(0, 2, 1)
-
         return x
 
 
@@ -62,6 +60,7 @@ class Model(nn.Module):
 
         self.d_model = configs.d_model
         self.enc_in = configs.enc_in
+        self.c_out = configs.c_out
         self.dropout = configs.dropout
         if self.task_name == 'classification':
             self.act = F.gelu
@@ -89,19 +88,21 @@ class Model(nn.Module):
         self.chunk_proj_2 = nn.Linear(self.num_chunks, 1)
 
         self.layer_3 = IEBlock(
-            input_dim=self.d_model // 2,
+            input_dim=self.d_model // 2 * self.enc_in,
             hid_dim=self.d_model // 2,
             output_dim=self.pred_len,
-            num_node=self.enc_in
+            num_node=self.c_out
         )
 
         self.ar = nn.Linear(self.seq_len, self.pred_len)
+        self.proj = nn.Linear(self.enc_in, self.c_out)
 
     def encoder(self, x):
         B, T, N = x.size()
 
         highway = self.ar(x.permute(0, 2, 1))
         highway = highway.permute(0, 2, 1)
+        highway = self.proj(highway)
 
         # continuous sampling
         x1 = x.reshape(B, self.num_chunks, self.chunk_size, N)
@@ -119,7 +120,7 @@ class Model(nn.Module):
 
         x3 = torch.cat([x1, x2], dim=-1)
 
-        x3 = x3.reshape(B, N, -1)
+        x3 = x3.reshape(B, self.c_out, -1)
         x3 = x3.permute(0, 2, 1)
 
         out = self.layer_3(x3)
