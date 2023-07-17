@@ -5,7 +5,7 @@ from layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLay
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import DataEmbedding
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 class Model(nn.Module):
     """
@@ -19,6 +19,7 @@ class Model(nn.Module):
         self.task_name = configs.task_name
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
+        self.n_heads = configs.n_heads
         # Embedding
         self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
                                            configs.dropout)
@@ -28,7 +29,7 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                      output_attention=configs.output_attention), configs.d_model, configs.n_heads),
+                                      output_attention=True), configs.d_model, configs.n_heads),
                     configs.d_model,
                     configs.d_ff,
                     dropout=configs.dropout,
@@ -50,7 +51,7 @@ class Model(nn.Module):
                             configs.d_model, configs.n_heads),
                         AttentionLayer(
                             FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                          output_attention=False),
+                                          output_attention=True),
                             configs.d_model, configs.n_heads),
                         configs.d_model,
                         configs.d_ff,
@@ -77,7 +78,7 @@ class Model(nn.Module):
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
 
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
-        dec_out = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+        dec_out, _ = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
         return dec_out
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
