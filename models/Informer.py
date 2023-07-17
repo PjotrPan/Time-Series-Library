@@ -4,7 +4,8 @@ import torch.nn.functional as F
 from layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLayer, ConvLayer
 from layers.SelfAttention_Family import ProbAttention, AttentionLayer
 from layers.Embed import DataEmbedding
-
+import matplotlib.pyplot as plt
+import numpy as np
 
 class Model(nn.Module):
     """
@@ -17,6 +18,7 @@ class Model(nn.Module):
         self.task_name = configs.task_name
         self.pred_len = configs.pred_len
         self.label_len = configs.label_len
+        self.n_heads = configs.n_heads
 
         # Embedding
         self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
@@ -30,7 +32,7 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         ProbAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                      output_attention=configs.output_attention),
+                                      output_attention=True),
                         configs.d_model, configs.n_heads),
                     configs.d_model,
                     configs.d_ff,
@@ -53,7 +55,7 @@ class Model(nn.Module):
                         ProbAttention(True, configs.factor, attention_dropout=configs.dropout, output_attention=False),
                         configs.d_model, configs.n_heads),
                     AttentionLayer(
-                        ProbAttention(False, configs.factor, attention_dropout=configs.dropout, output_attention=False),
+                        ProbAttention(False, configs.factor, attention_dropout=configs.dropout, output_attention=True),
                         configs.d_model, configs.n_heads),
                     configs.d_model,
                     configs.d_ff,
@@ -79,8 +81,32 @@ class Model(nn.Module):
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
 
-        dec_out = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+        dec_out, attn = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+      
+        if attn is not None:
+            ground_truth = np.zeros((x_enc.shape[1] + 6, 1))
+            ground_truth[:x_enc.shape[1]] = x_enc[0].cpu().detach().numpy()
+            ground_truth[x_enc.shape[1]:] = x_dec[0,-6:].cpu().detach().numpy()
 
+            prediction = np.zeros_like(ground_truth)
+            prediction[:x_enc.shape[1]] = x_enc[0].cpu().detach().numpy()
+            prediction[x_enc.shape[1]:] = dec_out[0, -6:].cpu().detach().numpy()
+            
+            cols = 2
+            rows = int(self.n_heads / cols + 1)
+            plt.clf()
+            fig_cross, axs_self_attention = plt.subplots(rows, cols)
+            fig_self, axs_cross_attention = plt.subplots(rows, cols)
+            axs_self_attention[0,0].plot(np.arange(prediction.shape[0]), prediction)
+            axs_cross_attention[0,0].plot(np.arange(prediction.shape[0]), prediction)
+            for i in range(self.n_heads):
+                x = (i // cols) + 1
+                y = i % cols
+                axs_self_attention[x,y].imshow(attns[-1].cpu().detach().numpy()[0][1])
+                axs_cross_attention[x,y].imshow(attn.cpu().detach().numpy()[0][i])
+            fig_self.savefig("./z_analyze_transformer/full_self_attn_map.png")
+            fig_cross.savefig("./z_analyze_transformer/full_cross_attn_map.png")
+        
         return dec_out  # [B, L, D]
     
     def short_forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
@@ -92,9 +118,9 @@ class Model(nn.Module):
 
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        enc_out, _ = self.encoder(enc_out, attn_mask=None)
 
-        dec_out = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+        dec_out, _ = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
 
         dec_out = dec_out * std_enc + mean_enc
         return dec_out  # [B, L, D]
@@ -130,7 +156,7 @@ class Model(nn.Module):
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast':
-            dec_out = self.long_forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+            dec_out = self.short_forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         if self.task_name == 'short_term_forecast':
             dec_out = self.short_forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
