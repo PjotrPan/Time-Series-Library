@@ -5,23 +5,28 @@ import glob
 import re
 import torch
 from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from utils.timefeatures import time_features
 from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
 from sktime.datasets import load_from_tsfile_to_dataframe
 import warnings
+from scipy.signal import lfilter
+
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 
 class Ohio_Dataset(Dataset):
     def __init__(self, root_path, flag='train', 
                  size=None, features='S', 
-                 data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets",
-                 target='OT', scale=True, timeenc=0, freq='h', 
+                 data_path="single",
+                 target='OT', scale=True, timeenc=1, freq='t', 
                  seasonal_patterns=None, forecast_history=36, forecast_length=6,
-                 patient_numbers=None, no_features=1):
+                 patient_numbers=None, no_features=1, filter_size=3):
 
+
+        self.root_path = "~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets"
         self.scale = scale
         self.timeenc = timeenc
 
@@ -29,38 +34,58 @@ class Ohio_Dataset(Dataset):
         self.flag = flag
         self.data_path = data_path
         self.no_features = no_features
+        self.filter_size = filter_size
+        print(f"Actual filter size: {self.filter_size}")
 
         if size:
             self.forecast_history = size[0]
+            self.label_len = size[1]
             self.forecast_length = size[2]
         else:
             self.forecast_history = forecast_history
+            self.label_len = forecast_length
             self.forecast_length = forecast_length
 
         assert flag in ['train', 'test', 'val']
         self.flag = flag
         type_map = {'train': 0, 'val': 1, 'test': 2}
         self.set_type = type_map[flag]
-        if not patient_numbers:
+
+        if data_path == "single":
+            if not patient_numbers:
+                raise NotImplementedError("Must specify a patient number!")
+            else:
+                patient_numbers = [patient_numbers, patient_numbers, patient_numbers]
+                self.patient_numbers = patient_numbers[self.set_type]
+
+        elif data_path == "2020":
             patient_numbers = [[540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596]]
             
-            #patient_numbers = [[540, 544],
-            #                   [540],[540]]
             self.patient_numbers = patient_numbers[self.set_type]
-        else:
+
+        elif data_path == "synthetic":
+            patient_numbers = [patient_numbers,patient_numbers,patient_numbers]
+            self.patient_numbers = patient_numbers[self.set_type]
+
+        elif data_path == "target":
             print(f"Focus on patient with number: {patient_numbers}")
-            patient_numbers = [patient_numbers, patient_numbers, patient_numbers]
+            all_patients = [540,544,552,567,584,596,559,563,570,575,588,591]
+            all_patients.pop(all_patients.index(int(patient_numbers[0])))
+            patient_numbers = [all_patients, patient_numbers, patient_numbers]
 
             self.patient_numbers = patient_numbers[self.set_type]
+        
+        else:
+            raise NotImplementedError("Must Specify a data path!")
 
         self.__read_data__()
 
     def __read_data__(self):
         self.scaler = StandardScaler()
 
-        all_data = [pd.read_csv(os.path.join(self.data_path, f"{patient_number}_{self.flag}_dataset.csv"))
+        all_data = [pd.read_csv(os.path.join(self.root_path, self.data_path, f"{patient_number}_{self.flag}_dataset.csv"))
                     for patient_number in self.patient_numbers]
 
         self.entry_count = np.array([len(data) for data in all_data])
@@ -106,13 +131,14 @@ class Ohio_Dataset(Dataset):
             time_padding = np.zeros((max(self.entry_count) - time_shape[0], time_shape[1]))
             time_data = np.concatenate((data_stamp, time_padding), axis=0)
             time_data = np.expand_dims(time_data, axis=0)
-
+            
             if self.scale:
                 glucose_level = df_raw["glucose_level"].values.reshape(-1,1)
                 df_raw["glucose_level"] = self.scaler.transform(glucose_level)
                 data = df_raw.values
             else:
                 data = df_raw.values
+
             data_shape = data.shape
             data_padding = np.zeros((max(self.entry_count) - data_shape[0], data_shape[1]))
             data = np.concatenate((data, data_padding), axis=0)
@@ -127,22 +153,41 @@ class Ohio_Dataset(Dataset):
 
         print(f"Data has {self.no_features} Features")
 
+        for i in range(1, self.no_features):
+            temp_scaler = StandardScaler()
+            #temp_data = np.log10(np.maximum(total_data[:,:,i], 1e-4))
+            temp_data = total_data[:,:,i]        
+            temp_scaler.fit_transform(temp_data.reshape(-1,1))
+            b, l = temp_data.shape
+            #total_data[:,:,i] = temp_scaler.transform(temp_data.reshape(-1,1)).reshape(b,l)
+
+
         self.data_x = total_data[:,:,:self.no_features]
+        self.x_size = self.data_x.shape
         self.data_y = total_data[:,:,:1]
         self.data_stamp = times
 
+
+    def _ma(self, x, filter_size=3):
+        c = x.copy()
+        for i in range(1, len(c)):
+            bound = min(i, filter_size, len(c)-i)
+            c[i] = (x[i-bound:i+bound]).mean()
+        return c
 
     def __getitem__(self, index):
         patient_idx = np.where(index < self.cum_entry_count)[0][0]
         s_begin = index - self.cum_entry_count[patient_idx - 1] if patient_idx > 0 else index
         s_end = s_begin + self.forecast_history
-        r_begin = s_end
-        r_end = r_begin + self.forecast_length
+        r_begin = s_end - self.label_len
+        r_end = r_begin + self.label_len + self.forecast_length
 
         seq_x = self.data_x[patient_idx, s_begin:s_end]
         seq_y = self.data_y[patient_idx, r_begin:r_end]
         seq_x_mark = self.data_stamp[patient_idx, s_begin:s_end]
         seq_y_mark = self.data_stamp[patient_idx, r_begin:r_end]
+
+        #seq_x[:,0] = self._ma(seq_x[:,0])
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
@@ -271,6 +316,14 @@ class Dataset_ETT_hour(Dataset):
 
         self.root_path = root_path
         self.data_path = data_path
+        print(f"seq_len: {self.seq_len}\n\
+                label_len: {self.label_len}\n\
+                pred_len: {self.pred_len}\n\
+                features: {self.features}\n\
+                timeenc: {self.timeenc}\n\
+                freq: {self.freq}\n\
+              ")
+        
         self.__read_data__()
 
     def __read_data__(self):
