@@ -5,7 +5,7 @@ from layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLay
 from layers.SelfAttention_Family import FullAttention, AttentionLayer
 from layers.Embed import DataEmbedding
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 class Model(nn.Module):
     """
@@ -19,6 +19,7 @@ class Model(nn.Module):
         self.task_name = configs.task_name
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
+        self.n_heads = configs.n_heads
         # Embedding
         self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
                                            configs.dropout)
@@ -28,7 +29,7 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                      output_attention=configs.output_attention), configs.d_model, configs.n_heads),
+                                      output_attention=True), configs.d_model, configs.n_heads),
                     configs.d_model,
                     configs.d_ff,
                     dropout=configs.dropout,
@@ -50,7 +51,7 @@ class Model(nn.Module):
                             configs.d_model, configs.n_heads),
                         AttentionLayer(
                             FullAttention(False, configs.factor, attention_dropout=configs.dropout,
-                                          output_attention=False),
+                                          output_attention=True),
                             configs.d_model, configs.n_heads),
                         configs.d_model,
                         configs.d_ff,
@@ -77,7 +78,35 @@ class Model(nn.Module):
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
 
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
-        dec_out = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+        dec_out, attn = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
+
+        if attn is not None:
+            ground_truth = np.zeros((x_enc.shape[1] + 6, 1))
+            ground_truth[:x_enc.shape[1]] = x_enc[0].cpu().detach().numpy()
+            ground_truth[x_enc.shape[1]:] = x_dec[0,-6:].cpu().detach().numpy()
+
+            prediction = np.zeros_like(ground_truth)
+            prediction[:x_enc.shape[1]] = x_enc[0].cpu().detach().numpy()
+            prediction[x_enc.shape[1]:] = dec_out[0, -6:].cpu().detach().numpy()
+            
+            cols = 2
+            rows = int(self.n_heads / cols + 1)
+            plt.clf()
+            fig_cross, axs_self_attention = plt.subplots(rows, cols)
+            fig_self, axs_cross_attention = plt.subplots(rows, cols)
+            axs_self_attention[0,0].plot(np.arange(prediction.shape[0]), prediction)
+            #axs_self_attention[0,0].plot(np.arange(ground_truth.shape[0]), ground_truth)
+            axs_cross_attention[0,0].plot(np.arange(prediction.shape[0]), prediction)
+            #axs_cross_attention[0,0].plot(np.arange(ground_truth.shape[0]), ground_truth)
+            for i in range(self.n_heads):
+                x = (i // cols) + 1
+                y = i % cols
+                axs_self_attention[x,y].imshow(attns[-1].cpu().detach().numpy()[0][1])
+                axs_cross_attention[x,y].imshow(attn.cpu().detach().numpy()[0][i])
+            fig_self.savefig("./z_analyze_transformer/full_self_attn_map.png")
+            fig_cross.savefig("./z_analyze_transformer/full_cross_attn_map.png")
+        
+
         return dec_out
 
     def imputation(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask):
