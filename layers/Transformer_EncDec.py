@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class ConvLayer(nn.Module):
     def __init__(self, c_in):
         super(ConvLayer, self).__init__()
@@ -102,18 +101,16 @@ class DecoderLayer(nn.Module):
             tau=tau, delta=None
         )[0])
         x = self.norm1(x)
-
-        x = x + self.dropout(self.cross_attention(
-            x, cross, cross,
-            attn_mask=cross_mask,
-            tau=tau, delta=delta
-        )[0])
+        new_x, attn = self.cross_attention(x, cross, cross,
+                                         attn_mask=cross_mask,
+                                         tau=tau, delta=delta)
+        x = x + self.dropout(new_x)
 
         y = x = self.norm2(x)
         y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))
 
-        return self.norm3(x + y)
+        return self.norm3(x + y), attn
 
 
 class Decoder(nn.Module):
@@ -125,11 +122,11 @@ class Decoder(nn.Module):
 
     def forward(self, x, cross, x_mask=None, cross_mask=None, tau=None, delta=None):
         for layer in self.layers:
-            x = layer(x, cross, x_mask=x_mask, cross_mask=cross_mask, tau=tau, delta=delta)
+            x, attn = layer(x, cross, x_mask=x_mask, cross_mask=cross_mask, tau=tau, delta=delta)
 
         if self.norm is not None:
             x = self.norm(x)
 
         if self.projection is not None:
             x = self.projection(x)
-        return x
+        return x, attn
