@@ -80,7 +80,7 @@ class Model(nn.Module):
         dec_out = self.dec_embedding(x_dec, x_mark_dec)
         dec_out, attn = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None)
 
-        if attn is not None:
+        """if attn is not None:
             ground_truth = np.zeros((x_enc.shape[1] + 6, 1))
             ground_truth[:x_enc.shape[1]] = x_enc[0].cpu().detach().numpy()
             ground_truth[x_enc.shape[1]:] = x_dec[0,-6:].cpu().detach().numpy()
@@ -104,7 +104,7 @@ class Model(nn.Module):
                 axs_self_attention[x,y].imshow(attns[-1].cpu().detach().numpy()[0][1])
                 axs_cross_attention[x,y].imshow(attn.cpu().detach().numpy()[0][i])
             fig_self.savefig("./z_analyze_transformer/full_self_attn_map.png")
-            fig_cross.savefig("./z_analyze_transformer/full_cross_attn_map.png")
+            fig_cross.savefig("./z_analyze_transformer/full_cross_attn_map.png")"""
         
 
         return dec_out
