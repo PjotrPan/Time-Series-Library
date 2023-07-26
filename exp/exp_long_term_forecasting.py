@@ -41,7 +41,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return criterion
 
     def _weighted_loss(self, pred, true, cpu=False):
-        weight = torch.tensor([1.0, 1.0, 1.0, 1.5, 2.3, 3.0]*true.shape[0]).reshape(true.shape)
+        weight = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 1.0]*true.shape[0]).reshape(true.shape)
         weight = weight.float()
         if not cpu:
             weight = weight.to(self.device)
@@ -52,13 +52,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print("\n start sweeping \n")
 
         sweep_configuration = {
-            'method': 'random',
+            'method': 'grid',
             'name': 'sweep',
-            'metric': {'goal': 'minimize', 'name': 'validation loss'},
+            'metric': {'goal': 'minimize', 'name': 'Test MAE'},
             'parameters': 
             {
-                'seq_len': {'values': [42, 54, 66, 78]},
-                'moving_avg': {'values': [3, 5, 9, 13, 17, 25]}
+                'd_ff': {'values': [512, 1024]},
+                'd_model': {'values': [512, 1024]},
+                'seq_len': {'values': [42, 54, 66]},
+                'label_len': {'values': [12, 15]},
             }
         }
 
@@ -71,7 +73,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
     def update_sweep(self):       
         self.args.seq_len = wandb.config.seq_len
-        self.args.moving_avg = wandb.config.moving_avg
+        self.args.label_len = wandb.config.label_len
+        self.args.d_model = wandb.config.d_model
+        self.args.d_ff = wandb.config.d_ff
+
+        self.args.enc_in = 1 + len(self.args.features)
 
         self.model = self._build_model().to(self.device)
 
@@ -227,9 +233,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = 1
-            #test_loss = self.vali(test_data, test_loader, criterion)
 
-            wandb.log({"training loss": train_loss, "validation loss": vali_loss, "Unscaled Validation loss": np.sqrt(test_data.inverse_transform(vali_loss.reshape(-1,1)))})
+            wandb.log({"training loss": train_loss, "validation loss": vali_loss})
 
             print("Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                 epoch + 1, train_steps, train_loss, vali_loss, test_loss))
@@ -239,6 +244,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 break
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
+
+        if self.args.sweep == True:
+            test_loss, _ = self.test(setting)
+            wandb.log({'Test MAE': test_loss})
 
         best_model_path = path + '/' + 'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
@@ -261,6 +270,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
+
+                if True in torch.isnan(batch_x) or True in torch.isnan(batch_y):
+                    continue
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
@@ -298,8 +310,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 if i % 20 == 0:
                     input = batch_x.detach().cpu().numpy()
-                    gt = np.concatenate((input[0, :, 0], true[0, :, -1]), axis=0)
-                    pd = np.concatenate((input[0, :, 0], pred[0, :, -1]), axis=0)
+                    gt = np.concatenate((input[0, :, 0], true[0, -1:, -1]), axis=0)
+                    pd = np.concatenate((input[0, :, 0], pred[0, -1:, -1]), axis=0)
                     gt = test_data.inverse_transform(gt.reshape(-1,1))
                     pd = test_data.inverse_transform(pd.reshape(-1,1))
                     wandb.log({"Test Error": np.abs(gt - pd).sum()})
@@ -313,24 +325,63 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = './results/' + setting + '/'
+        model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}"
+        folder_path = './results/' + model_description + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
         preds = test_data.inverse_transform(preds[:,:,0])
         trues = test_data.inverse_transform(trues[:,:,0])
    
+        print("Shape")
+        print(preds.shape)
+        print(trues.shape)
         plt.clf()
-        e = np.abs(trues - preds).sum(axis=1)
+        e = np.abs(trues[:,-1] - preds[:,-1])
         x = np.arange(len(trues))
         plt.hist(e, bins=100)
         plt.savefig(folder_path + 'loss.png')
 
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print(f'{"="*60}\n\nMean error: {np.abs(trues - preds).sum(axis=1).mean()}\n\n{"="*60}')
-        print(f'Compare to: {np.abs(preds - trues).mean()}')
+        plt.clf()
+        def compute_avg(preds, trues):
+            new_p = np.zeros((len(preds)-len(preds[0])))
+            for i in range(len(new_p)):
+                new_p[i] = np.diagonal(np.fliplr(preds[i-self.args.pred_len:i])).mean()
+            new_t = trues[self.args.pred_len:,0]
+            return new_p, new_t
+        
+        def save_plot(p, t, start):
+            plt.clf()
+            print(f"Start time: {start} / {len(test_data)}")
+            print(f"p: {len(p)} - t: {len(t)}")
+            plt.plot(np.arange(12*24), p[start:start+(12*24)])
+            plt.plot(np.arange(12*24), t[start:start+(12*24)])
+            plt.legend(["prediction", "ground truth"])
+            plt.savefig(folder_path + f'prediction_img_mean_{start}.png')
 
-        print('rmse:{}, mae:{}'.format(rmse, mae))
+
+        new_p, new_t = compute_avg(preds, trues)
+        x = np.linspace(0,len(new_p),len(new_p)//(12*24))
+        p = preds.reshape(-1,self.args.pred_len)[:,-1]
+        t = trues.reshape(-1,self.args.pred_len)[:,-1]
+        
+        for idx, start_time in enumerate(x[:-2]):
+            start_time = int(start_time)
+            #save_plot(new_p, new_t, int(start_time))
+            plt.clf()
+            plt.plot(np.arange(12*24), p[start_time:start_time+(12*24)])
+            plt.plot(np.arange(12*24), t[start_time:start_time+(12*24)])
+            plt.legend(["prediction", "ground truth"])
+            plt.savefig(folder_path + f'prediction_img_{idx}.png')
+        
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+
+
+        mae = np.abs(t - p).mean()
+        mse = ((t-p)**2).mean()
+        rmse = np.sqrt(mse)
+        print(f'{"="*60}\n\nMAE: {mae}\nRMSE: {rmse} \n{"="*60}')
+        """
         f = open("result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}'.format(mse, mae))
@@ -341,5 +392,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
+        """
 
-        return
+        return mae, rmse
