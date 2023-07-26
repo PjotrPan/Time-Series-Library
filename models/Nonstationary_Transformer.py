@@ -124,14 +124,18 @@ class Model(nn.Module):
         # B x S x E, B x 1 x E -> B x S
         delta = self.delta_learner(x_raw, mean_enc)
 
-        x_dec_new = torch.cat([x_enc[:, -self.label_len:, :], torch.zeros_like(x_dec[:, -self.pred_len:, :])],
+        x_dec_new = torch.cat([x_enc[:, -self.label_len:, 0].unsqueeze(-1), torch.zeros_like(x_dec[:, -self.pred_len:, :])],
                               dim=1).to(x_enc.device).clone()
 
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        if True in torch.isnan(enc_out):
+            print("Found NAN in embedded encoding")
         enc_out, attns = self.encoder(enc_out, attn_mask=None, tau=tau, delta=delta)
+        if True in torch.isnan(enc_out):
+            print("Found NAN in encoder output")
 
         dec_out = self.dec_embedding(x_dec_new, x_mark_dec)
-        dec_out = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None, tau=tau, delta=delta)
+        dec_out, attn = self.decoder(dec_out, enc_out, x_mask=None, cross_mask=None, tau=tau, delta=delta)
         dec_out = dec_out * std_enc + mean_enc
         return dec_out
 
@@ -151,10 +155,13 @@ class Model(nn.Module):
         # B x S x E, B x 1 x E -> B x S
         delta = self.delta_learner(x_raw, mean_enc)
 
+
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
         enc_out, attns = self.encoder(enc_out, attn_mask=None, tau=tau, delta=delta)
 
+
         dec_out = self.projection(enc_out)
+
         dec_out = dec_out * std_enc + mean_enc
         return dec_out
 
