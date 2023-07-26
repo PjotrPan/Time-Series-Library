@@ -8,12 +8,12 @@ class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
-            'TimesNet': TimesNet,           # -/+
-            'Autoformer': Autoformer,       # -
+            'TimesNet': TimesNet,           # +
+            'Autoformer': Autoformer,       # +
             'Transformer': Transformer,     # +
-            'Nonstationary_Transformer': Nonstationary_Transformer, # -
+            'Nonstationary_Transformer': Nonstationary_Transformer, # +
             'DLinear': DLinear,             # + (Only 1 Feature)
-            'FEDformer': FEDformer,         # -
+            'FEDformer': FEDformer,         # +
             'Informer': Informer,           # +
             'LightTS': LightTS,             # +
             'Reformer': Reformer,           # +
