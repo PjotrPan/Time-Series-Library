@@ -4,38 +4,35 @@ import pandas as pd
 import glob
 import re
 import torch
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import StandardScaler, RobustScaler
+from torch.utils.data import Dataset
+from sklearn.preprocessing import StandardScaler, RobustScaler, MinMaxScaler
 from utils.timefeatures import time_features
 from data_provider.m4 import M4Dataset, M4Meta
 from data_provider.uea import subsample, interpolate_missing, Normalizer
 from sktime.datasets import load_from_tsfile_to_dataframe
 import warnings
-from scipy.signal import lfilter
-
-import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 
 class Ohio_Dataset(Dataset):
     def __init__(self, root_path, flag='train', 
-                 size=None, features='S', 
-                 data_path="single",
+                 size=None, data_path="single",
                  target='OT', scale=True, timeenc=1, freq='t', 
                  seasonal_patterns=None, forecast_history=36, forecast_length=6,
-                 patient_numbers=None, no_features=1, filter_size=3):
+                 patient_numbers=None, features=[], filter_size=3,
+                 scaler="StandardScaler", interpolation_method="slinear"):
 
-
-        self.root_path = "~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets"
+        self.root_path = "~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/Time-Series-Library/dataset/T1DMOhio/"
         self.scale = scale
         self.timeenc = timeenc
 
         self.freq = freq
         self.flag = flag
         self.data_path = data_path
-        self.no_features = no_features
+        self.features = features
         self.filter_size = filter_size
-        print(f"Actual filter size: {self.filter_size}")
+        self.scaler_type = scaler
+        self.interpolation_method = interpolation_method
 
         if size:
             self.forecast_history = size[0]
@@ -62,7 +59,7 @@ class Ohio_Dataset(Dataset):
             patient_numbers = [[540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596,559,563,570,575,588,591],
                             [540,544,552,567,584,596]]
-            
+
             self.patient_numbers = patient_numbers[self.set_type]
 
         elif data_path == "synthetic":
@@ -70,23 +67,28 @@ class Ohio_Dataset(Dataset):
             self.patient_numbers = patient_numbers[self.set_type]
 
         elif data_path == "target":
-            print(f"Focus on patient with number: {patient_numbers}")
-            all_patients = [540,544,552,567,584,596,559,563,570,575,588,591]
-            all_patients.pop(all_patients.index(int(patient_numbers[0])))
-            patient_numbers = [all_patients, patient_numbers, patient_numbers]
-
-            self.patient_numbers = patient_numbers[self.set_type]
-        
+            if not patient_numbers:
+                raise NotImplementedError("Must specify a patient number!")
+            else:
+                print(f"Focus on patient with number: {patient_numbers}")
+                all_patients = [540,544,552,567,584,596,559,563,570,575,588,591]
+                all_patients.pop(all_patients.index(int(patient_numbers[0])))
+                patient_numbers = [all_patients, patient_numbers, patient_numbers]
+                self.patient_numbers = patient_numbers[self.set_type]
         else:
             raise NotImplementedError("Must Specify a data path!")
 
         self.__read_data__()
 
     def __read_data__(self):
-        self.scaler = StandardScaler()
+        self.scaler = self.get_scaler()
 
-        all_data = [pd.read_csv(os.path.join(self.root_path, self.data_path, f"{patient_number}_{self.flag}_dataset.csv"))
-                    for patient_number in self.patient_numbers]
+        all_data = []
+        for patient_number in self.patient_numbers:
+            file_path = os.path.join(self.root_path, self.data_path, f"{patient_number}_{self.flag}_dataset.csv")
+            patient_data = pd.read_csv(file_path)
+            patient_data["glucose_level"] = patient_data["glucose_level"].interpolate(self.interpolation_method)
+            all_data.append(patient_data)
 
         self.entry_count = np.array([len(data) for data in all_data])
         self.cum_entry_count = (self.entry_count - self.forecast_history - self.forecast_length + 1).cumsum()
@@ -111,21 +113,15 @@ class Ohio_Dataset(Dataset):
                 df_stamp['minute'] = df_stamp.datetime.apply(lambda row: row.minute, 1)
                 data_stamp = df_stamp.drop(['datetime'], 1).values
                 df_raw = df_raw.drop(["datetime"], 1)
+            
             elif self.timeenc == 1:
                 data_stamp = time_features(pd.to_datetime(df_stamp['datetime'].values), freq=self.freq)
                 data_stamp = data_stamp.transpose(1, 0)
                 df_raw = df_raw.drop(['datetime'], 1)
                 
             elif self.timeenc == 2:
-                data_stamp = df_raw[["month_cos", "month_sin", 
-                                    "day_cos", "day_sin", 
-                                    "hour_cos", "hour_sin", 
-                                    "minute_cos", "minute_sin"]]
-                
-                df_raw = df_raw.drop([["month_cos", "month_sin",
-                                    "day_cos", "day_sin", 
-                                    "hour_cos", "hour_sin", 
-                                    "minute_cos", "minute_sin"]], 1) 
+                data_stamp = self.convert_time_to_cos_sin(df_stamp["datetime"])
+                df_raw = df_raw.drop(['datetime'], 1)
         
             time_shape = data_stamp.shape
             time_padding = np.zeros((max(self.entry_count) - time_shape[0], time_shape[1]))
@@ -134,10 +130,19 @@ class Ohio_Dataset(Dataset):
             
             if self.scale:
                 glucose_level = df_raw["glucose_level"].values.reshape(-1,1)
-                df_raw["glucose_level"] = self.scaler.transform(glucose_level)
-                data = df_raw.values
+                data = self.scaler.transform(glucose_level)
             else:
-                data = df_raw.values
+                data = df_raw["glucose_level"].values.reshape(-1,1)
+
+            for feature in self.features:
+                if feature == "insulin":
+                    feature_values = self.merge_basal_and_bolus(df_raw).reshape(-1,1)
+                elif feature == "activity":
+                    feature_values = self.merge_sleep_exercise_and_work(df_raw).reshape(-1,1)
+                else:
+                    feature_values = df_raw[feature].values.reshape(-1,1)
+
+                data = np.concatenate((data, feature_values), axis=1)
 
             data_shape = data.shape
             data_padding = np.zeros((max(self.entry_count) - data_shape[0], data_shape[1]))
@@ -151,28 +156,102 @@ class Ohio_Dataset(Dataset):
                 times = np.concatenate((times, time_data), axis=0)
                 total_data = np.concatenate((total_data, data), axis=0)
 
-        print(f"Data has {self.no_features} Features")
+        if self.scale:
+            for i in range(1,len(self.features)+1):
+                feature_scaler = self.get_scaler()
+                temp_data = total_data[:,:,i]        
+                feature_scaler.fit_transform(temp_data.reshape(-1,1))
+                b, l = temp_data.shape
+                total_data[:,:,i] = feature_scaler.transform(temp_data.reshape(-1,1)).reshape(b,l)
 
-        for i in range(1, self.no_features):
-            temp_scaler = StandardScaler()
-            #temp_data = np.log10(np.maximum(total_data[:,:,i], 1e-4))
-            temp_data = total_data[:,:,i]        
-            temp_scaler.fit_transform(temp_data.reshape(-1,1))
-            b, l = temp_data.shape
-            #total_data[:,:,i] = temp_scaler.transform(temp_data.reshape(-1,1)).reshape(b,l)
-
-
-        self.data_x = total_data[:,:,:self.no_features]
+        self.data_x = total_data.copy()
         self.x_size = self.data_x.shape
         self.data_y = total_data[:,:,:1]
         self.data_stamp = times
 
+    def get_scaler(self):
+        scaler_dict = {
+            "StandardScaler": StandardScaler(),
+            "MinMaxScaler": MinMaxScaler(),
+            "RobustScaler": RobustScaler()
+        }
+        return scaler_dict[self.scaler_type]
 
-    def _ma(self, x, filter_size=3):
+    def convert_time_to_cos_sin(self, basetime: list) -> tuple:
+        """Converts all timestamps into sine and cosine values
+        for minutes, hours, days and months. 
+        
+        Args:
+            basetime (list(float)): The datasets basetime as pd timestamps
+
+        Returns:
+            pd.DataFrame(
+                time_list (np.ndarray): All the sine and cosine values for minutes, hours, days and months.
+                    Output shape is: (len(basetime), 8)
+                names (list(string)): List of the column names of the time_list array. 
+            )
+        """
+        minute_list = [(np.cos(t), np.sin(t)) for t in np.linspace(0, 2*np.pi, 60)]
+        hour_list = [(np.cos(t), np.sin(t)) for t in np.linspace(0, 2*np.pi, 24)]
+        day_list = [(np.cos(t), np.sin(t)) for t in np.linspace(0, 2*np.pi, 31)]
+        month_list = [(np.cos(t), np.sin(t)) for t in np.linspace(0, 2*np.pi, 12)]
+
+        minutes = np.array([minute_list[dt.minute] for dt in basetime])
+        hours = np.array([hour_list[dt.hour] for dt in basetime])
+
+        days = np.array([day_list[dt.day-1] for dt in basetime])
+        months = np.array([month_list[dt.month-1] for dt in basetime])
+        names = ["month_cos", "month_sin", "day_cos", "day_sin", "hour_cos", "hour_sin", "minute_cos", "minute_sin"]
+
+        time_list = np.hstack((months, days, hours, minutes))
+
+        return pd.DataFrame(time_list, columns=names)
+
+    def merge_basal_and_bolus(self, df_raw):
+        """
+        Replace Basal Rate with Temp Basal Rate wherever Temp Basal Rate has a value
+        Add Bolus Dose to the combined Basal Rate
+        """
+        basal = df_raw["basal_rate"].values
+        temp_basal = df_raw["temp_basal_rate"].values
+        bolus = df_raw["bolus"].values
+
+        insulin = basal.copy()
+        temp_basal_mask = (temp_basal >= 0)      
+        insulin[temp_basal_mask] = temp_basal[temp_basal_mask]
+
+        bolus_mask = (bolus >= 0)
+        insulin[bolus_mask] += bolus[bolus_mask]
+
+        return insulin
+
+    def merge_sleep_exercise_and_work(self, df_raw):
+        """
+        Sleep: 1-3
+        Work: 1-10
+        Exercise: 1-10
+
+        scale: sleep [0.00 - 0.33] work [0.33 - 0.66] exercise [0.66 - 1.00]
+        """
+        sleep = np.array([(v-1)/(3-1) if v > 0 else -1 for v in df_raw["sleep"].values])
+        work = np.array([(v-1)/(10-1)+1 if v > 0 else -1 for v in df_raw["work"].values])
+        exercise = np.array([(v-1)/(10-1)+2 if v > 0 else -1 for v in df_raw["exercise"].values])
+
+        work_mask = (work >= 0)
+        exercise_mask = (exercise >= 0)
+
+        activity = sleep.copy()
+        activity[work_mask] = work[work_mask]
+        activity[exercise_mask] = exercise[exercise_mask]
+
+        return activity
+
+    def _ma(self, x):
         c = x.copy()
-        for i in range(1, len(c)):
-            bound = min(i, filter_size, len(c)-i)
-            c[i] = (x[i-bound:i+bound]).mean()
+        if self.filter_size > 0:
+            for i in range(1, len(c)):
+                bound = min(i, self.filter_size, len(c)-i)
+                c[i] = (x[i-bound:i+bound]).mean()
         return c
 
     def __getitem__(self, index):
@@ -182,109 +261,18 @@ class Ohio_Dataset(Dataset):
         r_begin = s_end - self.label_len
         r_end = r_begin + self.label_len + self.forecast_length
 
-        seq_x = self.data_x[patient_idx, s_begin:s_end]
-        seq_y = self.data_y[patient_idx, r_begin:r_end]
+        seq_x = self.data_x[patient_idx, s_begin:s_end].copy()
         seq_x_mark = self.data_stamp[patient_idx, s_begin:s_end]
+        seq_x[:,0] = self._ma(seq_x[:,0])
+        
+        seq_y = self.data_y[patient_idx, r_begin:r_end].copy()
         seq_y_mark = self.data_stamp[patient_idx, r_begin:r_end]
-
-        #seq_x[:,0] = self._ma(seq_x[:,0])
+        seq_y[:self.label_len,0] = seq_x[-self.label_len:,0]
 
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
         return (self.entry_count - self.forecast_history - self.forecast_length + 1).sum()
-
-    def inverse_transform(self, data):
-        return self.scaler.inverse_transform(data)
-
-class Ohio_Dataset_Single(Dataset):
-    def __init__(self, root_path, flag='train', size=None,
-                 features='S', data_path="~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets/588_train_dataset.csv",
-                 target='OT', scale=True, timeenc=0, freq='h', 
-                 seasonal_patterns=None, forecast_history=36, forecast_length=6):
-        
-        self.root_path = root_path
-        self.scale = scale
-        self.timeenc = timeenc
-        self.freq = freq
-        self.flag = flag
-        self.data_path = data_path + "/588_train_dataset.csv"
-
-        if size:
-            self.forecast_history = size[0]
-            self.forecast_length = size[2]
-        else:
-            self.forecast_history = forecast_history
-            self.forecast_length = forecast_length
-
-        assert flag in ['train', 'test', 'val']
-        type_map = {'train': 0, 'val': 1, 'test': 2}
-        self.set_type = type_map[flag]
-
-        self.__read_data__()
-
-    def __read_data__(self):
-        self.scaler = StandardScaler()
-        df_raw = pd.read_csv(self.data_path)
-
-        if "Unnamed: 0" in df_raw.columns:
-            df_raw = df_raw.drop(["Unnamed: 0"], 1)
-
-        border1s = [0, int(len(df_raw)*0.85), int(len(df_raw)*0.95)]
-        border2s = [int(len(df_raw)*0.85), int(len(df_raw)*0.95), int(len(df_raw))]
-        border1 = border1s[self.set_type]
-        border2 = border2s[self.set_type]
-
-        df_stamp = df_raw[['datetime']][border1:border2]
-        df_stamp['datetime'] = pd.to_datetime(df_stamp.datetime)
-        if self.timeenc == 0:
-            df_stamp['month'] = df_stamp.datetime.apply(lambda row: row.month, 1)
-            df_stamp['day'] = df_stamp.datetime.apply(lambda row: row.day, 1)
-            df_stamp['hour'] = df_stamp.datetime.apply(lambda row: row.hour, 1)
-            df_stamp['minute'] = df_stamp.datetime.apply(lambda row: row.minute, 1)
-            data_stamp = df_stamp.drop(['datetime'], 1).values
-            df_raw = df_raw.drop(["datetime"], 1)
-        elif self.timeenc == 1:
-            data_stamp = time_features(pd.to_datetime(df_stamp['datetime'].values), freq=self.freq)
-            data_stamp = data_stamp.transpose(1, 0)
-            df_raw = df_raw.drop(['datetime'], 1)
-            
-        elif self.timeenc == 2:
-            data_stamp = df_raw[["month_cos", "month_sin", 
-                                 "day_cos", "day_sin", 
-                                 "hour_cos", "hour_sin", 
-                                 "minute_cos", "minute_sin"]]
-            
-            df_raw = df_raw.drop([["month_cos", "month_sin",
-                                   "day_cos", "day_sin", 
-                                   "hour_cos", "hour_sin", 
-                                   "minute_cos", "minute_sin"]], 1) 
-
-        if self.scale:
-            glucose_level = df_raw["glucose_level"].values.reshape(-1,1)
-            self.scaler.fit(glucose_level)
-            df_raw["glucose_level"] = self.scaler.transform(glucose_level)
-            data = df_raw.values
-
-        self.data_x = data[border1:border2, 0].reshape(-1,1)
-        self.data_y = data[border1:border2, 0].reshape(-1,1)
-        self.data_stamp = data_stamp
-
-    def __getitem__(self, index):
-        s_begin = index
-        s_end = s_begin + self.forecast_history
-        r_begin = s_end
-        r_end = r_begin + self.forecast_length
-
-        seq_x = self.data_x[s_begin:s_end]
-        seq_y = self.data_y[r_begin:r_end]
-        seq_x_mark = self.data_stamp[s_begin:s_end]
-        seq_y_mark = self.data_stamp[r_begin:r_end]
-
-        return seq_x, seq_y, seq_x_mark, seq_y_mark
-
-    def __len__(self):
-        return len(self.data_x) - self.forecast_history - self.forecast_length + 1
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)

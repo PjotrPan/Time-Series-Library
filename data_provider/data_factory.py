@@ -77,14 +77,15 @@ def data_provider(args, flag):
             data_path=args.data_path,
             flag=flag,
             size=[args.seq_len, args.label_len, args.pred_len],
-            features=args.features,
             target=args.target,
-            timeenc=timeenc,
+            timeenc=args.timeenc,
             freq=freq,
             seasonal_patterns=args.seasonal_patterns,
             patient_numbers=args.patient_numbers,
-            no_features=args.no_features,
-            filter_size=args.filter_size
+            features=args.features,
+            filter_size=args.filter_size,
+            scaler=args.scaler,
+            interpolation_method=args.interpolation_method
         )
         print(flag, len(data_set))
         data_loader = DataLoader(

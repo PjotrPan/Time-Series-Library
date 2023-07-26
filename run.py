@@ -30,16 +30,16 @@ if __name__ == '__main__':
     parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
     parser.add_argument('--root_path', type=str, default='~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='single', help='data file')
-    parser.add_argument('--features', type=str, default='M',
-                        help='forecasting task, options:[M, S, MS]; M:multivariate predict multivariate, S:univariate predict univariate, MS:multivariate predict univariate')
     parser.add_argument('--target', type=str, default='OT', help='target feature in S or MS task')
     parser.add_argument('--freq', type=str, default='t',
                         help='freq for time features encoding, options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], you can also use more detailed freq like 15min or 3h')
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
     parser.add_argument('--patient_numbers', type=str, default=None, nargs="*")
-    parser.add_argument('--no_features', type=int, default=1)
+    parser.add_argument('--features', type=str, default=[], nargs="*")
     parser.add_argument('--timeenc', type=int, default=1)
     parser.add_argument('--filter_size', type=int, default=3)
+    parser.add_argument('--scaler', type=str, default="StandardScaler")
+    parser.add_argument('--interpolation_method', type=str, default="slinear")
 
     # forecasting task
     parser.add_argument('--seq_len', type=int, default=48, help='input sequence length')
@@ -78,8 +78,8 @@ if __name__ == '__main__':
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
-    parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
-    parser.add_argument('--batch_size', type=int, default=128, help='batch size of train input data')
+    parser.add_argument('--train_epochs', type=int, default=50, help='train epochs')
+    parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
     parser.add_argument('--patience', type=int, default=3, help='early stopping patience')
     parser.add_argument('--learning_rate', type=float, default=0.01, help='optimizer learning rate')
     parser.add_argument('--des', type=str, default='test', help='exp description')
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     print(f"GPU? {args.use_gpu}")
     args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 
-    args.enc_in = args.no_features
+    args.enc_in = 1 + len(args.features)
 
     if args.use_gpu and args.use_multi_gpu:
         args.devices = args.devices.replace(' ', '')
@@ -159,6 +159,7 @@ if __name__ == '__main__':
                 exp.test(setting)
                 torch.cuda.empty_cache()
     else:
+        results = np.zeros((7,4))
         ii = 0
         setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_fc{}_eb{}_dt{}_{}_{}'.format(
             args.task_name,
@@ -179,7 +180,20 @@ if __name__ == '__main__':
             args.distil,
             args.des, ii)
 
-        exp = Exp(args)  # set experiments
-        print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test(setting, test=1)
-        torch.cuda.empty_cache()
+        for idx_i, pn in enumerate([540,544,552,567,584,596]):
+            args.patient_numbers = [f"{pn}"]
+            for idx_j, pred_len in enumerate([6, 12]):
+                args.pred_len = pred_len
+                exp = Exp(args)  # set experiments
+                print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
+                exp.train(setting)
+                print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+                mae, rmse = exp.test(setting)
+                results[idx_i, idx_j] = mae
+                results[idx_i, idx_j + 2] = rmse
+                torch.cuda.empty_cache()
+
+        results[-1,:] = results[:-1,:].mean(axis=0)
+        print(results)
+        space = "="*60
+        print(f"\n{space}\n{results[-1,:]}\n score: {results[-1,:].sum()}")
