@@ -57,10 +57,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             'metric': {'goal': 'minimize', 'name': 'Test MAE'},
             'parameters': 
             {
-                'd_ff': {'values': [512, 1024]},
-                'd_model': {'values': [512, 1024]},
-                'seq_len': {'values': [42, 54, 66]},
-                'label_len': {'values': [12, 15]},
+                'scaler': {'values': ["StandardScaler", "MinMaxScaler", "RobustScaler"]},
+                'interpolation': {'values': ["linear", "nearest", "quadratic"]},
+                'seq_len': {'values': [36, 54, 72]},
+                'filter_size': {'values': [1, 3, 5]},
+                'patient_numbers': {'values': [[540],[544],[552],[567],[584],[596]]}
             }
         }
 
@@ -73,11 +74,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
     def update_sweep(self):       
         self.args.seq_len = wandb.config.seq_len
-        self.args.label_len = wandb.config.label_len
-        self.args.d_model = wandb.config.d_model
-        self.args.d_ff = wandb.config.d_ff
+        self.args.scaler = wandb.config.scaler
+        self.args.interpolation = wandb.config.interpolation
+        self.args.filter_size = wandb.config.filter_size
+        self.args.patient_numbers = wandb.config.patient_numbers
 
-        self.args.enc_in = 1 + len(self.args.features)
+        self.args.enc_in = 1 + len(self.args.features) #dont change
 
         self.model = self._build_model().to(self.device)
 
@@ -164,6 +166,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
+
+        print(self.args.model_id)
+        print(self.args.model)
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -315,7 +320,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     gt = test_data.inverse_transform(gt.reshape(-1,1))
                     pd = test_data.inverse_transform(pd.reshape(-1,1))
                     wandb.log({"Test Error": np.abs(gt - pd).sum()})
-                    visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
+                    #visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
 
         preds = np.array(preds)
         trues = np.array(trues)
@@ -325,7 +330,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}"
+        model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}_forecasthorizon{self.args.seq_len}_scaler{self.args.scaler}_interpolation{self.args.interpolation_method}"
         folder_path = './results/' + model_description + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -364,31 +369,34 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         x = np.linspace(0,len(new_p),len(new_p)//(12*24))
         p = preds.reshape(-1,self.args.pred_len)[:,-1]
         t = trues.reshape(-1,self.args.pred_len)[:,-1]
+        np.save(folder_path + "preds", p)
+        np.save(folder_path + "trues", t)
         
-        for idx, start_time in enumerate(x[:-2]):
-            start_time = int(start_time)
-            #save_plot(new_p, new_t, int(start_time))
-            plt.clf()
-            plt.plot(np.arange(12*24), p[start_time:start_time+(12*24)])
-            plt.plot(np.arange(12*24), t[start_time:start_time+(12*24)])
-            plt.legend(["prediction", "ground truth"])
-            plt.savefig(folder_path + f'prediction_img_{idx}.png')
+        #for idx, start_time in enumerate(x[:-2]):
+        #    start_time = int(start_time)
+        #    #save_plot(new_p, new_t, int(start_time))
+        #    plt.clf()
+        #    plt.plot(np.arange(12*24), p[start_time:start_time+(12*24)])
+        #    plt.plot(np.arange(12*24), t[start_time:start_time+(12*24)])
+        #    plt.legend(["prediction", "ground truth"])
+        #    plt.savefig(folder_path + f'prediction_img_{idx}.png')
         
         mae, mse, rmse, mape, mspe = metric(preds, trues)
-
+        np.save(folder_path + "mae", mae)
+        np.save(folder_path + "rmse", rmse)
 
         mae = np.abs(t - p).mean()
         mse = ((t-p)**2).mean()
         rmse = np.sqrt(mse)
         print(f'{"="*60}\n\nMAE: {mae}\nRMSE: {rmse} \n{"="*60}')
-        """
-        f = open("result_long_term_forecast.txt", 'a')
+        
+        f = open(folder_path + "result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}'.format(mse, mae))
+        f.write('mae:{}, rmse:{}'.format(mae, rmse))
         f.write('\n')
         f.write('\n')
         f.close()
-
+        """
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
