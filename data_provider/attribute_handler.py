@@ -96,7 +96,7 @@ class DatasetCreator():
             data_batch = self.transform_to_basetime(basetime, attr.data_batch, attr.nan_value)
             data_batch = attr.interpolate(data_batch)
             if dataset is None:
-                dataset = data_batch.astype(np.float)
+                dataset = data_batch.astype(np.float64)
                 col_names.extend(attr.names)
                 continue
             dataset = np.concatenate((dataset, data_batch), axis=1)

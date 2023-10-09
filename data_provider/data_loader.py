@@ -22,7 +22,7 @@ class Ohio_Dataset(Dataset):
                  patient_numbers=None, features=[], filter_size=3,
                  scaler="StandardScaler", interpolation_method="slinear"):
 
-        self.root_path = "~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/Time-Series-Library/dataset/T1DMOhio/"
+        self.root_path = "~/Hochschule/forschungsprojekt/Time-Series-Library/dataset/T1DMOhio/"
         self.scale = scale
         self.timeenc = timeenc
 
@@ -32,7 +32,6 @@ class Ohio_Dataset(Dataset):
         self.features = features
         self.filter_size = filter_size
         self.scaler_type = scaler
-        self.interpolation_method = interpolation_method
 
         if size:
             self.forecast_history = size[0]
@@ -45,6 +44,7 @@ class Ohio_Dataset(Dataset):
 
         assert flag in ['train', 'test', 'val']
         self.flag = flag
+        self.interpolation_method = None if self.flag == 'test' else interpolation_method
         type_map = {'train': 0, 'val': 1, 'test': 2}
         self.set_type = type_map[flag]
 
@@ -52,6 +52,8 @@ class Ohio_Dataset(Dataset):
             if not patient_numbers:
                 raise NotImplementedError("Must specify a patient number!")
             else:
+                if type(patient_numbers) != list:
+                    patient_numbers = [patient_numbers]
                 patient_numbers = [patient_numbers, patient_numbers, patient_numbers]
                 self.patient_numbers = patient_numbers[self.set_type]
 
@@ -87,7 +89,8 @@ class Ohio_Dataset(Dataset):
         for patient_number in self.patient_numbers:
             file_path = os.path.join(self.root_path, self.data_path, f"{patient_number}_{self.flag}_dataset.csv")
             patient_data = pd.read_csv(file_path)
-            patient_data["glucose_level"] = patient_data["glucose_level"].interpolate(self.interpolation_method)
+            if self.interpolation_method:
+                patient_data["glucose_level"] = patient_data["glucose_level"].interpolate(self.interpolation_method)
             all_data.append(patient_data)
 
         self.entry_count = np.array([len(data) for data in all_data])
@@ -101,7 +104,7 @@ class Ohio_Dataset(Dataset):
 
         for idx, df_raw in enumerate(all_data):
             if "Unnamed: 0" in df_raw.columns:
-                df_raw = df_raw.drop(["Unnamed: 0"], 1)
+                df_raw = df_raw.drop("Unnamed: 0", axis=1)
 
             df_stamp = df_raw[['datetime']]
             df_stamp['datetime'] = pd.to_datetime(df_stamp.datetime)
@@ -111,17 +114,17 @@ class Ohio_Dataset(Dataset):
                 df_stamp['day'] = df_stamp.datetime.apply(lambda row: row.day, 1)
                 df_stamp['hour'] = df_stamp.datetime.apply(lambda row: row.hour, 1)
                 df_stamp['minute'] = df_stamp.datetime.apply(lambda row: row.minute, 1)
-                data_stamp = df_stamp.drop(['datetime'], 1).values
-                df_raw = df_raw.drop(["datetime"], 1)
+                data_stamp = df_stamp.drop('datetime', axis=1).values
+                df_raw = df_raw.drop("datetime", axis=1)
             
             elif self.timeenc == 1:
                 data_stamp = time_features(pd.to_datetime(df_stamp['datetime'].values), freq=self.freq)
                 data_stamp = data_stamp.transpose(1, 0)
-                df_raw = df_raw.drop(['datetime'], 1)
+                df_raw = df_raw.drop('datetime', axis=1)
                 
             elif self.timeenc == 2:
                 data_stamp = self.convert_time_to_cos_sin(df_stamp["datetime"])
-                df_raw = df_raw.drop(['datetime'], 1)
+                df_raw = df_raw.drop('datetime', axis=1)
         
             time_shape = data_stamp.shape
             time_padding = np.zeros((max(self.entry_count) - time_shape[0], time_shape[1]))
@@ -344,7 +347,7 @@ class Dataset_ETT_hour(Dataset):
             df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
             df_stamp['weekday'] = df_stamp.date.apply(lambda row: row.weekday(), 1)
             df_stamp['hour'] = df_stamp.date.apply(lambda row: row.hour, 1)
-            data_stamp = df_stamp.drop(['date'], 1).values
+            data_stamp = df_stamp.drop('date', axis=1).values
         elif self.timeenc == 1:
             data_stamp = time_features(pd.to_datetime(df_stamp['date'].values), freq=self.freq)
             data_stamp = data_stamp.transpose(1, 0)
@@ -957,8 +960,8 @@ class UEAloader(Dataset):
         # Then concatenate into a (num_samples * seq_len, feat_dim) dataframe, with multiple rows corresponding to the
         # sample index (i.e. the same scheme as all datasets in this project)
 
-        df = pd.concat((pd.DataFrame({col: df.loc[row, col] for col in df.columns}).reset_index(drop=True).set_index(
-            pd.Series(lengths[row, 0] * [row])) for row in range(df.shape[0])), axis=0)
+        #df = pd.concat((pd.DataFrame({col: df.loc[row, col] for col in df.columns}).reset_index(drop=True).set_inaxis=dex(
+        #    pd.Series(lengths[row, 0] * [row])) for row in range(df.shape[0])), axis=0)
 
         # Replace NaN values
         grp = df.groupby(by=df.index)
