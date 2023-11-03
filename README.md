@@ -3,6 +3,62 @@ TSlib is an open-source library for deep learning researchers, especially deep t
 
 We provide a neat code base to evaluate advanced deep time series models or develop your own model, which covers five mainstream tasks: **long- and short-term forecasting, imputation, anomaly detection, and classification.**
 
+
+## Information for HSE project
+
+Bevor die Modelle trainiert werden können, muss der Datensatz entsprechend vorbereitet werden. Die Rohdaten liegen in XML vor und sollen später als Pandas DataFrame geladen werden. Dafür werden die Daten in einer csv zwischengespeichert. Dafür führt ihr einmal das data_provider/ohio.py Skript aus. Die notwendige Ordnerstruktur (dataset) muss manuell erstellt werden. 
+
+```
+├── checkpoints
+├── data_provider
+├── dataset
+│   └── T1DMOhio
+│       ├── 2020
+│       ├── raw
+│       ├── single
+│       └── target
+├── exp
+├── layers
+├── models
+├── pic
+├── results
+├── scripts
+├── test_results
+├── utils
+├── venv
+└── wandb
+```
+
+Da für die Bewertung lediglich die Testdatensätze der Patienten aus 2020 verwendet werden, können die einzelnen Patientendaten verschieden kombiniert werden. Dafür haben wir 3 Modi vorgesehen:
+ - Single: Verwendet nur die Daten eines einzigen Patienten für Training, Validierung und Test
+ - Target: Verwendet die Daten (train und test) aller Patienten außer des 'Targets' für das Training und die Daten des 'Targets' für Validierung (train) und Test (test) 
+ - 2020: Im Gegensatz zu den beiden vorherigen Modi, wird hier ein globales Modell trainiert. Alle Daten von Patienten aus 2018 werden für das Training verwendet, während die Daten der Patienten aus 2020 für Validierung und Test verwendet werden.
+
+Folgende Attribute sind bereits implementiert und können als Argument für das Training übergeben werden: glucose_level, finger_stick, basal, temp_basal, bolus, basis_gsr, basis_air_temperature, basis_heart_rate, basis_skin_temperature, sleep, work, exercise, meal
+
+Außerdem können insulin und activity als Attributnamen übergeben werden. Hintergrund ist die Idee, mehrere lichte Attribute in einem dichten Attribut zusammenzufassen. 
+- insulin: Hier werden die Basal und Bolus Werte zusammengefasst. Temp_basal überschreibt die eigentliche Basalrate und Bolus wird bei Einnahme addiert.
+- activity: Da sich Schlaf, Arbeit und Sport jeweils gegenseitig ausschließen, wird hier eine Aktivitätsskala erzeugt mit 0 für wenig aktiv und 1 für sehr aktiv.
+Der MA-Filter in der Datensatzklasse glättet die Zeitreihe der forecast history, jedoch nicht die der ground truth.
+
+Für die Interpolation nicht vorhandener Werte verwenden wir die [Standardmethoden](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.interpolate.html) von Pandas. 
+
+Im Folgenden werden die wichtigsten CLI Argumente beschrieben:
+
+name | info | type
+-- | - | -
+seq_len | Anzahl der Zeitschritte, die für die Prädiktion betrachtet werden | int
+label_len | Anzahl der Zeitschritte aus der forecast history, die als Hinweis/Richtung in die Prädiktion mitgegeben werden| int
+pred_len | Anzahl der Zeitschritte, die vorhergesagt werden sollen | int 
+patient_number | Nummer des Patienten, auf welchen der Fokus gelegt werden soll | int
+sweep | Startet einen vordefinierten Hyperparameter-Sweep| bool
+features | Namen der Features, die für das Training verwendet werden sollen | string
+filter_size | Größe des Moving Average Filters ( MA-(filter_size*2 + 1)) | int
+scaler | Scalertyp | string
+interpolation_method | Methode mit welcher nan-Werte interpoliert werden sollen | str
+
+
+
 ## Leaderboard for Time Series Analysis
 
 Till February 2023, the top three models for five different tasks are:
