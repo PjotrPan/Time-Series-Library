@@ -22,7 +22,7 @@ class Ohio_Dataset(Dataset):
                  patient_numbers=None, features=[], filter_size=3,
                  scaler="StandardScaler", interpolation_method="slinear"):
 
-        self.root_path = "~/Hochschule/forschungsprojekt/Time-Series-Library/dataset/T1DMOhio/"
+        self.root_path = "/home/es/es_es/es_licait00/Forschungsprojekt/Time-Series-Library/dataset/T1DMOhio/"
         self.scale = scale
         self.timeenc = timeenc
 
@@ -88,6 +88,8 @@ class Ohio_Dataset(Dataset):
         all_data = []
         for patient_number in self.patient_numbers:
             file_path = os.path.join(self.root_path, self.data_path, f"{patient_number}_{self.flag}_dataset.csv")
+            print(self.root_path)
+            print(self.data_path)
             patient_data = pd.read_csv(file_path)
             if self.interpolation_method:
                 patient_data["glucose_level"] = patient_data["glucose_level"].interpolate(self.interpolation_method)

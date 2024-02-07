@@ -57,10 +57,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             'metric': {'goal': 'minimize', 'name': 'Test MAE'},
             'parameters': 
             {
-                'scaler': {'values': ["StandardScaler", "MinMaxScaler", "RobustScaler"]},
-                'interpolation': {'values': ["linear", "nearest", "quadratic"]},
-                'seq_len': {'values': [36, 54, 72]},
-                'filter_size': {'values': [1, 3, 5]},
+                #'d_ff': {'values': [32, 512, 2048]},
+                'd_model': {'values': [16, 32, 64, 128, 256, 512]},
+                'e_layers': {'values': [6, 8, 10, 16]},
+                #'d_layers': {'values': [2, 8]},
+                'n_heads': {'values': [2, 3, 4]},
+                #'model': {'values': ["Pyraformer", "Transformer", "Informer", "Reformer", "Autoformer"]},
                 'patient_numbers': {'values': [[540],[544],[552],[567],[584],[596]]}
             }
         }
@@ -73,10 +75,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         wandb.agent(sweep_id, function = self.train )
 
     def update_sweep(self):       
-        self.args.seq_len = wandb.config.seq_len
-        self.args.scaler = wandb.config.scaler
-        self.args.interpolation = wandb.config.interpolation
-        self.args.filter_size = wandb.config.filter_size
+        #self.args.seq_len = wandb.config.seq_len
+        #self.args.scaler = wandb.config.scaler
+        #self.args.interpolation = wandb.config.interpolation
+        #self.args.filter_size = wandb.config.filter_size
+        #self.args.d_ff = wandb.config.d_ff
+        self.args.d_model = wandb.config.d_model
+        self.args.e_layers = wandb.config.e_layers
+        #self.args.d_layers = wandb.config.d_layers
+        self.args.n_heads = wandb.config.n_heads
+        #self.args.model = wandb.config.model
         self.args.patient_numbers = wandb.config.patient_numbers
 
         self.args.enc_in = 1 + len(self.args.features) #dont change
@@ -250,9 +258,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             adjust_learning_rate(model_optim, epoch + 1, self.args)
 
-        if self.args.sweep == True:
-            test_loss, _ = self.test(setting)
-            wandb.log({'Test MAE': test_loss})
+        #if self.args.sweep == True:
+        test_mae, rmse = self.test(setting)
+        wandb.log({'Test MAE': test_mae})
+        wandb.log({'Test RMSE': rmse})
 
         best_model_path = path + '/' + 'checkpoint.pth'
         self.model.load_state_dict(torch.load(best_model_path))
@@ -312,14 +321,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 true = batch_y
                 preds.append(pred)
                 trues.append(true)
+                
 
-                if i % 20 == 0:
-                    input = batch_x.detach().cpu().numpy()
-                    gt = np.concatenate((input[0, :, 0], true[0, -1:, -1]), axis=0)
-                    pd = np.concatenate((input[0, :, 0], pred[0, -1:, -1]), axis=0)
-                    gt = test_data.inverse_transform(gt.reshape(-1,1))
-                    pd = test_data.inverse_transform(pd.reshape(-1,1))
-                    wandb.log({"Test Error": np.abs(gt - pd).sum()})
+                #if i % 20 == 0:
+                #    input = batch_x.detach().cpu().numpy()
+                #    gt = np.concatenate((input[0, :, 0], true[0, -1:, -1]), axis=0)
+                #    pd = np.concatenate((input[0, :, 0], pred[0, -1:, -1]), axis=0)
+                #    gt = test_data.inverse_transform(gt.reshape(-1,1))
+                #    pd = test_data.inverse_transform(pd.reshape(-1,1))
+                #    wandb.log({"Test Error": np.abs(gt - pd).sum()})
                     #visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
 
         preds = np.array(preds)
@@ -330,22 +340,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}_forecasthorizon{self.args.seq_len}_scaler{self.args.scaler}_interpolation{self.args.interpolation_method}"
+        model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}_forecasthorizon{self.args.seq_len}_scaler{self.args.scaler}_interpolation{self.args.interpolation_method}_d_model{self.args.d_model}_d_ff{self.args.d_ff}_e_layers{self.args.e_layers}_d_layers{self.args.d_layers}_n_heads{self.args.n_heads}"
         folder_path = './results/' + model_description + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
         preds = test_data.inverse_transform(preds[:,:,0])
         trues = test_data.inverse_transform(trues[:,:,0])
-   
+        
+        
         print("Shape")
         print(preds.shape)
         print(trues.shape)
-        plt.clf()
-        e = np.abs(trues[:,-1] - preds[:,-1])
-        x = np.arange(len(trues))
-        plt.hist(e, bins=100)
-        plt.savefig(folder_path + 'loss.png')
+        #plt.clf()
+        #e = np.abs(trues[:,-1] - preds[:,-1])
+        #x = np.arange(len(trues))
+        #plt.hist(e, bins=100)
+        #plt.savefig(folder_path + 'loss.png')
 
         plt.clf()
         def compute_avg(preds, trues):
@@ -371,6 +382,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         t = trues.reshape(-1,self.args.pred_len)[:,-1]
         np.save(folder_path + "preds", p)
         np.save(folder_path + "trues", t)
+        print(type(p), type(t))
+        t1 = wandb.Table(data=p.reshape(-1,1), columns=['value'])
+        t2 = wandb.Table(data=t.reshape(-1,1), columns=['value'])
+        wandb.log({'preds': t1})
+        wandb.log({'trues': t2})
         
         #for idx, start_time in enumerate(x[:-2]):
         #    start_time = int(start_time)
