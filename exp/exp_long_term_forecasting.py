@@ -57,13 +57,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             'metric': {'goal': 'minimize', 'name': 'Test MAE'},
             'parameters': 
             {
-                #'d_ff': {'values': [32, 512, 2048]},
-                'd_model': {'values': [16, 32, 64, 128, 256, 512]},
-                'e_layers': {'values': [6, 8, 10, 16]},
+                'd_ff': {'values': [32, 64]},
+                'd_model': {'values': [32, 64]},
+                #'e_layers': {'values': [6, 8, 10, 16]},
                 #'d_layers': {'values': [2, 8]},
-                'n_heads': {'values': [2, 3, 4]},
+                #'n_heads': {'values': [2, 3, 4]},
                 #'model': {'values': ["Pyraformer", "Transformer", "Informer", "Reformer", "Autoformer"]},
-                'patient_numbers': {'values': [[540],[544],[552],[567],[584],[596]]}
+                #'patient_numbers': {'values': [[540],[544],[552],[567],[584],[596]]}
             }
         }
 
@@ -79,13 +79,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         #self.args.scaler = wandb.config.scaler
         #self.args.interpolation = wandb.config.interpolation
         #self.args.filter_size = wandb.config.filter_size
-        #self.args.d_ff = wandb.config.d_ff
+        self.args.d_ff = wandb.config.d_ff
         self.args.d_model = wandb.config.d_model
-        self.args.e_layers = wandb.config.e_layers
+        #self.args.e_layers = wandb.config.e_layers
         #self.args.d_layers = wandb.config.d_layers
-        self.args.n_heads = wandb.config.n_heads
+        #self.args.n_heads = wandb.config.n_heads
         #self.args.model = wandb.config.model
-        self.args.patient_numbers = wandb.config.patient_numbers
+        #self.args.patient_numbers = wandb.config.patient_numbers
 
         self.args.enc_in = 1 + len(self.args.features) #dont change
 
@@ -146,9 +146,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 true = batch_y.detach().cpu()
 
                 loss = criterion(pred, true)
-                #loss = self._weighted_loss(pred, true, cpu=True)
-
                 total_loss.append(loss)
+
         total_loss = np.average(total_loss)
 
         self.model.train()
@@ -174,9 +173,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
-
-        print(self.args.model_id)
-        print(self.args.model)
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -319,25 +315,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 pred = outputs
                 true = batch_y
-                preds.append(pred)
-                trues.append(true)
-                
-
-                #if i % 20 == 0:
-                #    input = batch_x.detach().cpu().numpy()
-                #    gt = np.concatenate((input[0, :, 0], true[0, -1:, -1]), axis=0)
-                #    pd = np.concatenate((input[0, :, 0], pred[0, -1:, -1]), axis=0)
-                #    gt = test_data.inverse_transform(gt.reshape(-1,1))
-                #    pd = test_data.inverse_transform(pd.reshape(-1,1))
-                #    wandb.log({"Test Error": np.abs(gt - pd).sum()})
-                    #visual(gt, pd, os.path.join(folder_path, str(i) + '.png'))
+                preds.append(pred[:,-1,:])
+                trues.append(true[:,-1,:])
 
         preds = np.array(preds)
         trues = np.array(trues)
-        print('test shape:', preds.shape, trues.shape)
-        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        print('test shape:', preds.shape, trues.shape)
 
         # result save
         model_description = f"{self.args.model}_{int(self.args.patient_numbers[0])}_{self.args.data_path}_predlen{self.args.pred_len}_forecasthorizon{self.args.seq_len}_scaler{self.args.scaler}_interpolation{self.args.interpolation_method}_d_model{self.args.d_model}_d_ff{self.args.d_ff}_e_layers{self.args.e_layers}_d_layers{self.args.d_layers}_n_heads{self.args.n_heads}"
@@ -345,77 +327,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
-        preds = test_data.inverse_transform(preds[:,:,0])
-        trues = test_data.inverse_transform(trues[:,:,0])
-        
-        
-        print("Shape")
-        print(preds.shape)
-        print(trues.shape)
-        #plt.clf()
-        #e = np.abs(trues[:,-1] - preds[:,-1])
-        #x = np.arange(len(trues))
-        #plt.hist(e, bins=100)
-        #plt.savefig(folder_path + 'loss.png')
+        preds = test_data.inverse_transform(preds.reshape(-1,1))
+        trues = test_data.inverse_transform(trues.reshape(-1,1))
 
-        plt.clf()
-        def compute_avg(preds, trues):
-            new_p = np.zeros((len(preds)-len(preds[0])))
-            for i in range(len(new_p)):
-                new_p[i] = np.diagonal(np.fliplr(preds[i-self.args.pred_len:i])).mean()
-            new_t = trues[self.args.pred_len:,0]
-            return new_p, new_t
-        
-        def save_plot(p, t, start):
-            plt.clf()
-            print(f"Start time: {start} / {len(test_data)}")
-            print(f"p: {len(p)} - t: {len(t)}")
-            plt.plot(np.arange(12*24), p[start:start+(12*24)])
-            plt.plot(np.arange(12*24), t[start:start+(12*24)])
-            plt.legend(["prediction", "ground truth"])
-            plt.savefig(folder_path + f'prediction_img_mean_{start}.png')
-
-
-        new_p, new_t = compute_avg(preds, trues)
-        x = np.linspace(0,len(new_p),len(new_p)//(12*24))
-        p = preds.reshape(-1,self.args.pred_len)[:,-1]
-        t = trues.reshape(-1,self.args.pred_len)[:,-1]
+        p = preds.copy()
+        t = trues.copy()
         np.save(folder_path + "preds", p)
         np.save(folder_path + "trues", t)
-        print(type(p), type(t))
         t1 = wandb.Table(data=p.reshape(-1,1), columns=['value'])
         t2 = wandb.Table(data=t.reshape(-1,1), columns=['value'])
         wandb.log({'preds': t1})
-        wandb.log({'trues': t2})
-        
-        #for idx, start_time in enumerate(x[:-2]):
-        #    start_time = int(start_time)
-        #    #save_plot(new_p, new_t, int(start_time))
-        #    plt.clf()
-        #    plt.plot(np.arange(12*24), p[start_time:start_time+(12*24)])
-        #    plt.plot(np.arange(12*24), t[start_time:start_time+(12*24)])
-        #    plt.legend(["prediction", "ground truth"])
-        #    plt.savefig(folder_path + f'prediction_img_{idx}.png')
-        
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        np.save(folder_path + "mae", mae)
-        np.save(folder_path + "rmse", rmse)
+        wandb.log({'trues': t2})      
 
         mae = np.abs(t - p).mean()
         mse = ((t-p)**2).mean()
         rmse = np.sqrt(mse)
+        np.save(folder_path + "mae", mae)
+        np.save(folder_path + "rmse", rmse)
         print(f'{"="*60}\n\nMAE: {mae}\nRMSE: {rmse} \n{"="*60}')
         
-        f = open(folder_path + "result_long_term_forecast.txt", 'a')
-        f.write(setting + "  \n")
-        f.write('mae:{}, rmse:{}'.format(mae, rmse))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-        """
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
-        """
+        #f = open(folder_path + "result_long_term_forecast.txt", 'a')
+        #f.write(setting + "  \n")
+        #f.write('mae:{}, rmse:{}'.format(mae, rmse))
+        #f.write('\n')
+        #f.write('\n')
+        #f.close()
 
         return mae, rmse

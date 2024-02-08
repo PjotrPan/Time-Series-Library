@@ -18,23 +18,23 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='TimesNet')
 
     # basic config
-    parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
+    parser.add_argument('--task_name', type=str, required=False, default='long_term_forecast',
                         help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
-    parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
-    parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
+    parser.add_argument('--is_training', type=int, required=False, default=1, help='status')
+    parser.add_argument('--model_id', type=str, required=False, default='test', help='model id')
     parser.add_argument('--model', type=str, required=True, default='Autoformer',
                         help='model name, options: [Autoformer, Transformer, TimesNet, Informer, Reformer, Pyraformer]')
     parser.add_argument('--sweep', type=bool, default=False)
 
     # data loader
-    parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
+    parser.add_argument('--data', type=str, required=False, default='Ohio', help='dataset type')
     parser.add_argument('--root_path', type=str, default='~/Hochschule/Studiengang_AIM/forschungsprojekt/BGLP/glucose_prediction/preprocessed_datasets', help='root path of the data file')
     parser.add_argument('--data_path', type=str, default='single', help='data file')
     parser.add_argument('--target', type=str, default='OT', help='target feature in S or MS task')
     parser.add_argument('--freq', type=str, default='t',
                         help='freq for time features encoding, options:[s:secondly, t:minutely, h:hourly, d:daily, b:business days, w:weekly, m:monthly], you can also use more detailed freq like 15min or 3h')
     parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
-    parser.add_argument('--patient_numbers', type=str, default=None, nargs="*")
+    parser.add_argument('--patient_numbers', type=str, required=True, nargs="*")
     parser.add_argument('--features', type=str, default=[], nargs="*")
     parser.add_argument('--timeenc', type=int, default=1)
     parser.add_argument('--filter_size', type=int, default=3)
@@ -155,8 +155,8 @@ if __name__ == '__main__':
                 print('>>>>>>>start training : {}>>>>>>>>>>>>>>>>>>>>>>>>>>'.format(setting))
                 exp.train(setting)
 
-                print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-                exp.test(setting)
+                #print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+                #exp.test(setting)
                 torch.cuda.empty_cache()
     else:
         results = np.zeros((7,4))
